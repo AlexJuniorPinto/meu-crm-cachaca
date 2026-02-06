@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cachaça CRM - Gestão Profissional</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .glass { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(10px); }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <!-- Bibliotecas Externas -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom": "https://esm.sh/react-dom@18.2.0",
+        "lucide-react": "https://esm.sh/lucide-react@0.244.0"
+      }
+    }
+    </script>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo } from 'react';
+        import ReactDOM from 'react-dom';
+        import * as Lucide from 'lucide-react';
+
+        // --- TIPOS E CONSTANTES ---
+        const ClientStatus = {
+            NEVER_CONTACTED: 'Nunca contatado',
+            VISITED: 'Visitado',
+            CALLED: 'Ligado'
+        };
+
+        const ContactType = {
+            VISIT: 'Visita presencial',
+            CALL: 'Ligação telefônica'
+        };
+
+        const AlertLevel = {
+            OK: 'OK',
+            ATTENTION: 'Atenção',
+            PRIORITY: 'Prioridade'
+        };
+
+        // --- SERVIÇO DE STORAGE ---
+        const storage = {
+            save: (key, data) => localStorage.setItem(key, JSON.stringify(data)),
+            get: (key) => JSON.parse(localStorage.getItem(key) || '[]'),
+            getSettings: () => JSON.parse(localStorage.getItem('crm_settings') || '{"googleSheetsUrl": "", "lastSync": null}')
+        };
+
+        // --- COMPONENTE PRINCIPAL ---
+        function App() {
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [clients, setClients] = useState(storage.get('crm_clients'));
+            const [contacts, setContacts] = useState(storage.get('crm_contacts'));
+            const [settings, setSettings] = useState(storage.getSettings());
+            
+            // Lógica de Alertas
+            const alerts = useMemo(() => {
+                const now = new Date();
+                return clients.map(client => {
+                    if (!client.lastContactAt) return { id: client.id, name: client.name, days: 999, level: AlertLevel.PRIORITY };
+                    const diff = Math.ceil(Math.abs(now - new Date(client.lastContactAt)) / (1000 * 60 * 60 * 24));
+                    let level = AlertLevel.OK;
+                    if (diff >= 30) level = AlertLevel.PRIORITY;
+                    else if (diff >= 15) level = AlertLevel.ATTENTION;
+                    return { id: client.id, name: client.name, days: diff, level };
+                });
+            }, [clients]);
+
+            // Sincronização
+            const sync = async () => {
+                if (!settings.googleSheetsUrl) return alert("Configure a URL da planilha primeiro!");
+                try {
+                    await fetch(settings.googleSheetsUrl, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        body: JSON.stringify({ clients, contacts })
+                    });
+                    const newSettings = { ...settings, lastSync: new Date().toISOString() };
+                    setSettings(newSettings);
+                    localStorage.setItem('crm_settings', JSON.stringify(newSettings));
+                    alert("Sincronizado com o Google Sheets!");
+                } catch (e) { alert("Erro ao sincronizar"); }
+            };
+
+            return (
+                <div className="flex flex-col md:flex-row min-h-screen">
+                    {/* Sidebar */}
+                    <nav className="w-full md:w-64 bg-slate-900 text-white p-6 space-y-8">
+                        <div className="flex items-center space-x-3">
+                            <Lucide.Wine className="text-amber-500 w-8 h-8" />
+                            <h1 className="text-xl font-bold">Cachaça CRM</h1>
+                        </div>
+                        <div className="space-y-2">
+                            <NavItem active={activeTab==='dashboard'} onClick={()=>setActiveTab('dashboard')} icon={<Lucide.LayoutDashboard/>} label="Alertas"/>
+                            <NavItem active={activeTab==='clients'} onClick={()=>setActiveTab('clients')} icon={<Lucide.Users/>} label="Clientes"/>
+                            <NavItem active={activeTab==='history'} onClick={()=>setActiveTab('history')} icon={<Lucide.History/>} label="Histórico"/>
+                            <NavItem active={activeTab==='settings'} onClick={()=>setActiveTab('settings')} icon={<Lucide.Settings/>} label="Configurações"/>
+                        </div>
+                        <button onClick={sync} className="w-full bg-amber-500 text-slate-900 py-3 rounded-xl font-bold flex items-center justify-center space-x-2">
+                            <Lucide.RefreshCw size={18}/>
+                            <span>Sincronizar</span>
+                        </button>
+                    </nav>
+
+                    {/* Content */}
+                    <main className="flex-1 p-4 md:p-10 overflow-y-auto">
+                        {activeTab === 'dashboard' && <DashboardView alerts={alerts} />}
+                        {activeTab === 'clients' && <ClientsView clients={clients} setClients={(c) => {setClients(c); storage.save('crm_clients', c)}} />}
+                        {activeTab === 'settings' && <SettingsView settings={settings} setSettings={setSettings} />}
+                        {activeTab === 'history' && <HistoryView contacts={contacts} />}
+                    </main>
+                </div>
+            );
+        }
+
+        // --- SUB-COMPONENTES AUXILIARES ---
+        const NavItem = ({active, icon, label, onClick}) => (
+            <button onClick={onClick} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${active ? 'bg-amber-500 text-slate-900 font-bold' : 'text-slate-400 hover:bg-slate-800'}`}>
+                {icon} <span>{label}</span>
+            </button>
+        );
+
+        const DashboardView = ({alerts}) => (
+            <div className="space-y-6">
+                <h2 className="text-3xl font-bold">Painel de Alertas</h2>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <StatCard color="red" count={alerts.filter(a=>a.level===AlertLevel.PRIORITY).length} label="Prioridade (+30 dias)"/>
+                    <StatCard color="amber" count={alerts.filter(a=>a.level===AlertLevel.ATTENTION).length} label="Atenção (+15 dias)"/>
+                    <StatCard color="emerald" count={alerts.filter(a=>a.level===AlertLevel.OK).length} label="Em dia"/>
+                </div>
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                    <h3 className="font-bold mb-4">Próximos Contatos</h3>
+                    {alerts.filter(a => a.level !== AlertLevel.OK).map(a => (
+                        <div key={a.id} className="flex justify-between items-center py-3 border-b border-slate-50 last:border-0">
+                            <span className="font-medium">{a.name}</span>
+                            <span className={`px-3 py-1 rounded-full text-xs font-bold ${a.level === AlertLevel.PRIORITY ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
+                                {a.days > 900 ? 'Nunca contatado' : `${a.days} dias sem contato`}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+
+        const StatCard = ({color, count, label}) => (
+            <div className={`p-6 rounded-2xl border bg-white shadow-sm border-${color}-100`}>
+                <div className={`text-${color}-600 font-bold text-4xl`}>{count}</div>
+                <div className="text-slate-500 text-sm font-medium">{label}</div>
+            </div>
+        );
+
+        const ClientsView = ({clients, setClients}) => {
+            const addClient = () => {
+                const name = prompt("Nome do Cliente:");
+                if(!name) return;
+                const newClient = { id: Date.now().toString(), name, createdAt: new Date().toISOString(), status: ClientStatus.NEVER_CONTACTED, lastContactAt: null };
+                setClients([...clients, newClient]);
+            };
+            return (
+                <div className="space-y-6">
+                    <div className="flex justify-between items-center">
+                        <h2 className="text-3xl font-bold">Clientes</h2>
+                        <button onClick={addClient} className="bg-slate-900 text-white px-6 py-2 rounded-xl font-bold flex items-center space-x-2">
+                            <Lucide.UserPlus size={18}/> <span>Novo Cliente</span>
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {clients.map(c => (
+                            <div key={c.id} className="bg-white p-5 rounded-2xl border border-slate-200 flex justify-between items-center">
+                                <div>
+                                    <div className="font-bold text-lg">{c.name}</div>
+                                    <div className="text-sm text-slate-500">Cadastrado em: {new Date(c.createdAt).toLocaleDateString()}</div>
+                                </div>
+                                <Lucide.ChevronRight className="text-slate-300"/>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const SettingsView = ({settings, setSettings}) => (
+            <div className="max-w-xl space-y-6">
+                <h2 className="text-3xl font-bold">Configurações</h2>
+                <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+                    <label className="block text-sm font-bold text-slate-700">URL do Google Apps Script (/exec)</label>
+                    <input 
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-amber-500 font-mono text-xs"
+                        value={settings.googleSheetsUrl}
+                        onChange={(e) => {
+                            const ns = {...settings, googleSheetsUrl: e.target.value};
+                            setSettings(ns);
+                            localStorage.setItem('crm_settings', JSON.stringify(ns));
+                        }}
+                        placeholder="https://script.google.com/macros/s/.../exec"
+                    />
+                    <div className="text-xs text-slate-400 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                        <p className="font-bold mb-1">Dica:</p>
+                        Para compartilhar com outra pessoa, basta ela colar este mesmo link nas configurações dela.
+                    </div>
+                </div>
+            </div>
+        );
+
+        const HistoryView = ({contacts}) => (
+            <div className="space-y-6">
+                <h2 className="text-3xl font-bold">Histórico</h2>
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+                    {contacts.length === 0 ? (
+                        <div className="p-20 text-center text-slate-400 italic">Nenhum contato registrado ainda.</div>
+                    ) : (
+                        <table className="w-full text-left">
+                            <thead className="bg-slate-50 border-b border-slate-100">
+                                <tr>
+                                    <th className="p-4 text-xs font-bold uppercase text-slate-500">Data</th>
+                                    <th className="p-4 text-xs font-bold uppercase text-slate-500">Cliente</th>
+                                    <th className="p-4 text-xs font-bold uppercase text-slate-500">Tipo</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {contacts.map(c => (
+                                    <tr key={c.id} className="border-b border-slate-50">
+                                        <td className="p-4 text-sm">{new Date(c.date).toLocaleDateString()}</td>
+                                        <td className="p-4 font-bold">{c.clientName}</td>
+                                        <td className="p-4 text-sm">{c.type}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            </div>
+        );
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
