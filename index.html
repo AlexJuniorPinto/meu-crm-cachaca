@@ -11,29 +11,33 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; }
-        .glass { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(10px); }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.05); }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(245, 158, 11, 0.3); border-radius: 10px; }
+        .glass { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
     <div id="root"></div>
 
-    <!-- Bibliotecas Externas -->
     <script type="importmap">
-    {
-      "imports": {
-        "react": "https://esm.sh/react@18.2.0",
-        "react-dom": "https://esm.sh/react-dom@18.2.0",
-        "lucide-react": "https://esm.sh/lucide-react@0.244.0"
-      }
-    }
-    </script>
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "lucide-react": "https://esm.sh/lucide-react@0.463.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "react/": "https://esm.sh/react@^19.2.4/"
+  }
+}
+</script>
 
     <script type="text/babel" data-type="module">
         import React, { useState, useEffect, useMemo } from 'react';
         import ReactDOM from 'react-dom';
         import * as Lucide from 'lucide-react';
 
-        // --- TIPOS E CONSTANTES ---
+        // --- CONSTANTES ---
         const ClientStatus = {
             NEVER_CONTACTED: 'Nunca contatado',
             VISITED: 'Visitado',
@@ -55,16 +59,22 @@
         const storage = {
             save: (key, data) => localStorage.setItem(key, JSON.stringify(data)),
             get: (key) => JSON.parse(localStorage.getItem(key) || '[]'),
-            getSettings: () => JSON.parse(localStorage.getItem('crm_settings') || '{"googleSheetsUrl": "", "lastSync": null}')
+            getSettings: () => JSON.parse(localStorage.getItem('crm_settings') || '{"googleSheetsUrl": "", "lastSync": null, "syncHistory": []}')
         };
 
-        // --- COMPONENTE PRINCIPAL ---
+        // --- COMPONENTE PRINCIPAL (APP) ---
         function App() {
             const [activeTab, setActiveTab] = useState('dashboard');
             const [clients, setClients] = useState(storage.get('crm_clients'));
             const [contacts, setContacts] = useState(storage.get('crm_contacts'));
             const [settings, setSettings] = useState(storage.getSettings());
-            
+            const [isSyncing, setIsSyncing] = useState(false);
+
+            // Atualiza o storage sempre que os dados mudam
+            useEffect(() => { storage.save('crm_clients', clients); }, [clients]);
+            useEffect(() => { storage.save('crm_contacts', contacts); }, [contacts]);
+            useEffect(() => { localStorage.setItem('crm_settings', JSON.stringify(settings)); }, [settings]);
+
             // Lógica de Alertas
             const alerts = useMemo(() => {
                 const now = new Date();
@@ -78,112 +88,232 @@
                 });
             }, [clients]);
 
-            // Sincronização
-            const sync = async () => {
-                if (!settings.googleSheetsUrl) return alert("Configure a URL da planilha primeiro!");
+            const addLog = (message, status) => {
+                const newLog = { timestamp: new Date().toISOString(), message, status };
+                setSettings(prev => ({
+                    ...prev,
+                    syncHistory: [newLog, ...(prev.syncHistory || [])].slice(0, 10)
+                }));
+            };
+
+            const handleSync = async () => {
+                if (!settings.googleSheetsUrl) {
+                    alert("Configure o link da planilha nas Configurações primeiro!");
+                    setActiveTab('settings');
+                    return;
+                }
+                setIsSyncing(true);
+                addLog("Iniciando sincronização...", "pending");
                 try {
                     await fetch(settings.googleSheetsUrl, {
                         method: 'POST',
                         mode: 'no-cors',
                         body: JSON.stringify({ clients, contacts })
                     });
-                    const newSettings = { ...settings, lastSync: new Date().toISOString() };
-                    setSettings(newSettings);
-                    localStorage.setItem('crm_settings', JSON.stringify(newSettings));
-                    alert("Sincronizado com o Google Sheets!");
-                } catch (e) { alert("Erro ao sincronizar"); }
+                    setSettings(prev => ({ ...prev, lastSync: new Date().toISOString() }));
+                    addLog("Sincronizado com sucesso!", "success");
+                    alert("Dados enviados para o Google Sheets!");
+                } catch (e) {
+                    addLog("Erro ao sincronizar.", "error");
+                    alert("Erro na conexão.");
+                } finally {
+                    setIsSyncing(false);
+                }
             };
 
             return (
                 <div className="flex flex-col md:flex-row min-h-screen">
-                    {/* Sidebar */}
-                    <nav className="w-full md:w-64 bg-slate-900 text-white p-6 space-y-8">
+                    {/* Sidebar / Menu */}
+                    <nav className="w-full md:w-64 bg-slate-900 text-white p-6 space-y-8 flex-shrink-0">
                         <div className="flex items-center space-x-3">
-                            <Lucide.Wine className="text-amber-500 w-8 h-8" />
-                            <h1 className="text-xl font-bold">Cachaça CRM</h1>
+                            <div className="bg-amber-500 p-2 rounded-lg">
+                                <Lucide.Wine className="text-slate-900 w-6 h-6" />
+                            </div>
+                            <h1 className="text-xl font-bold tracking-tight">Cachaça CRM</h1>
                         </div>
+                        
                         <div className="space-y-2">
-                            <NavItem active={activeTab==='dashboard'} onClick={()=>setActiveTab('dashboard')} icon={<Lucide.LayoutDashboard/>} label="Alertas"/>
-                            <NavItem active={activeTab==='clients'} onClick={()=>setActiveTab('clients')} icon={<Lucide.Users/>} label="Clientes"/>
-                            <NavItem active={activeTab==='history'} onClick={()=>setActiveTab('history')} icon={<Lucide.History/>} label="Histórico"/>
-                            <NavItem active={activeTab==='settings'} onClick={()=>setActiveTab('settings')} icon={<Lucide.Settings/>} label="Configurações"/>
+                            <NavItem active={activeTab==='dashboard'} onClick={()=>setActiveTab('dashboard')} icon={<Lucide.LayoutDashboard size={20}/>} label="Alertas"/>
+                            <NavItem active={activeTab==='clients'} onClick={()=>setActiveTab('clients')} icon={<Lucide.Users size={20}/>} label="Clientes"/>
+                            <NavItem active={activeTab==='history'} onClick={()=>setActiveTab('history')} icon={<Lucide.History size={20}/>} label="Histórico"/>
+                            <NavItem active={activeTab==='settings'} onClick={()=>setActiveTab('settings')} icon={<Lucide.Settings size={20}/>} label="Configurações"/>
                         </div>
-                        <button onClick={sync} className="w-full bg-amber-500 text-slate-900 py-3 rounded-xl font-bold flex items-center justify-center space-x-2">
-                            <Lucide.RefreshCw size={18}/>
-                            <span>Sincronizar</span>
-                        </button>
+
+                        <div className="pt-8 space-y-4">
+                            <button 
+                                onClick={handleSync} 
+                                disabled={isSyncing}
+                                className="w-full bg-slate-800 hover:bg-slate-700 text-amber-500 py-3 rounded-xl font-bold flex items-center justify-center space-x-2 border border-amber-500/20 transition-all disabled:opacity-50"
+                            >
+                                <Lucide.RefreshCw size={18} className={isSyncing ? 'animate-spin' : ''}/>
+                                <span>{isSyncing ? 'Sincronizando...' : 'Sincronizar'}</span>
+                            </button>
+                            <div className="text-[10px] text-center text-slate-500 uppercase font-bold tracking-widest">
+                                {settings.lastSync ? `Última: ${new Date(settings.lastSync).toLocaleTimeString()}` : 'Nunca sincronizado'}
+                            </div>
+                        </div>
                     </nav>
 
-                    {/* Content */}
-                    <main className="flex-1 p-4 md:p-10 overflow-y-auto">
-                        {activeTab === 'dashboard' && <DashboardView alerts={alerts} />}
-                        {activeTab === 'clients' && <ClientsView clients={clients} setClients={(c) => {setClients(c); storage.save('crm_clients', c)}} />}
-                        {activeTab === 'settings' && <SettingsView settings={settings} setSettings={setSettings} />}
+                    {/* Conteúdo Principal */}
+                    <main className="flex-1 p-6 md:p-10 overflow-y-auto custom-scrollbar">
+                        {activeTab === 'dashboard' && <DashboardView alerts={alerts} clients={clients} onContact={(id) => { 
+                            const c = clients.find(cl => cl.id === id);
+                            const obs = prompt(`O que foi conversado com ${c.name}?`);
+                            if(obs !== null) {
+                                const newContact = { 
+                                    id: Date.now().toString(), 
+                                    clientId: id, 
+                                    clientName: c.name, 
+                                    type: ContactType.VISIT, 
+                                    date: new Date().toISOString(), 
+                                    notes: obs 
+                                };
+                                setContacts([newContact, ...contacts]);
+                                setClients(clients.map(cl => cl.id === id ? { ...cl, lastContactAt: new Date().toISOString() } : cl));
+                            }
+                        }} />}
+                        
+                        {activeTab === 'clients' && <ClientsView clients={clients} setClients={setClients} />}
+                        
                         {activeTab === 'history' && <HistoryView contacts={contacts} />}
+                        
+                        {activeTab === 'settings' && <SettingsView settings={settings} setSettings={setSettings} onTest={handleSync} />}
                     </main>
                 </div>
             );
         }
 
-        // --- SUB-COMPONENTES AUXILIARES ---
+        // --- SUB-COMPONENTES ---
+
         const NavItem = ({active, icon, label, onClick}) => (
-            <button onClick={onClick} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${active ? 'bg-amber-500 text-slate-900 font-bold' : 'text-slate-400 hover:bg-slate-800'}`}>
-                {icon} <span>{label}</span>
+            <button onClick={onClick} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all ${active ? 'bg-amber-500 text-slate-900 font-bold shadow-lg shadow-amber-500/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                {icon} <span className="text-sm">{label}</span>
             </button>
         );
 
-        const DashboardView = ({alerts}) => (
-            <div className="space-y-6">
-                <h2 className="text-3xl font-bold">Painel de Alertas</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <StatCard color="red" count={alerts.filter(a=>a.level===AlertLevel.PRIORITY).length} label="Prioridade (+30 dias)"/>
-                    <StatCard color="amber" count={alerts.filter(a=>a.level===AlertLevel.ATTENTION).length} label="Atenção (+15 dias)"/>
-                    <StatCard color="emerald" count={alerts.filter(a=>a.level===AlertLevel.OK).length} label="Em dia"/>
-                </div>
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                    <h3 className="font-bold mb-4">Próximos Contatos</h3>
-                    {alerts.filter(a => a.level !== AlertLevel.OK).map(a => (
-                        <div key={a.id} className="flex justify-between items-center py-3 border-b border-slate-50 last:border-0">
-                            <span className="font-medium">{a.name}</span>
-                            <span className={`px-3 py-1 rounded-full text-xs font-bold ${a.level === AlertLevel.PRIORITY ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
-                                {a.days > 900 ? 'Nunca contatado' : `${a.days} dias sem contato`}
-                            </span>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        );
+        const DashboardView = ({alerts, clients, onContact}) => (
+            <div className="space-y-8 animate-in fade-in duration-500">
+                <header>
+                    <h2 className="text-3xl font-bold text-slate-900">Painel de Alertas</h2>
+                    <p className="text-slate-500">Clientes que precisam de uma visita ou ligação.</p>
+                </header>
 
-        const StatCard = ({color, count, label}) => (
-            <div className={`p-6 rounded-2xl border bg-white shadow-sm border-${color}-100`}>
-                <div className={`text-${color}-600 font-bold text-4xl`}>{count}</div>
-                <div className="text-slate-500 text-sm font-medium">{label}</div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="bg-white p-6 rounded-2xl border border-red-100 shadow-sm">
+                        <div className="text-red-600 font-bold text-4xl">{alerts.filter(a=>a.level===AlertLevel.PRIORITY).length}</div>
+                        <div className="text-slate-500 text-sm font-medium">Prioridade (+30 dias)</div>
+                    </div>
+                    <div className="bg-white p-6 rounded-2xl border border-amber-100 shadow-sm">
+                        <div className="text-amber-600 font-bold text-4xl">{alerts.filter(a=>a.level===AlertLevel.ATTENTION).length}</div>
+                        <div className="text-slate-500 text-sm font-medium">Atenção (+15 dias)</div>
+                    </div>
+                    <div className="bg-white p-6 rounded-2xl border border-emerald-100 shadow-sm">
+                        <div className="text-emerald-600 font-bold text-4xl">{alerts.filter(a=>a.level===AlertLevel.OK).length}</div>
+                        <div className="text-slate-500 text-sm font-medium">Contatos em dia</div>
+                    </div>
+                </div>
+
+                <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                        <h3 className="font-bold text-slate-800">Ações Necessárias</h3>
+                        <Lucide.Bell className="text-amber-500" size={20} />
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                        {alerts.filter(a => a.level !== AlertLevel.OK).length === 0 ? (
+                            <div className="p-12 text-center text-slate-400 italic">Tudo em dia por aqui! 🥃</div>
+                        ) : (
+                            alerts.filter(a => a.level !== AlertLevel.OK).map(a => (
+                                <div key={a.id} className="p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center hover:bg-slate-50 transition-colors">
+                                    <div className="space-y-1">
+                                        <div className="font-bold text-slate-900 text-lg">{a.name}</div>
+                                        <div className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${a.level === AlertLevel.PRIORITY ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
+                                            <Lucide.Clock size={12}/>
+                                            <span>{a.days > 900 ? 'Nunca contatado' : `${a.days} dias sem contato`}</span>
+                                        </div>
+                                    </div>
+                                    <button 
+                                        onClick={() => onContact(a.id)}
+                                        className="mt-4 sm:mt-0 bg-slate-900 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-slate-800 flex items-center space-x-2 transition-all shadow-md"
+                                    >
+                                        <span>Registrar Agora</span>
+                                        <Lucide.ChevronRight size={16}/>
+                                    </button>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
             </div>
         );
 
         const ClientsView = ({clients, setClients}) => {
+            const [search, setSearch] = useState('');
+            
             const addClient = () => {
-                const name = prompt("Nome do Cliente:");
+                const name = prompt("Nome completo ou Estabelecimento:");
                 if(!name) return;
-                const newClient = { id: Date.now().toString(), name, createdAt: new Date().toISOString(), status: ClientStatus.NEVER_CONTACTED, lastContactAt: null };
-                setClients([...clients, newClient]);
+                const doc = prompt("CPF ou CNPJ (opcional):") || "Não informado";
+                const city = prompt("Cidade:") || "Não informada";
+                
+                const newClient = { 
+                    id: Date.now().toString(), 
+                    name, 
+                    document: doc,
+                    city,
+                    createdAt: new Date().toISOString(), 
+                    lastContactAt: null 
+                };
+                setClients([newClient, ...clients]);
             };
+
+            const filtered = clients.filter(c => c.name.toLowerCase().includes(search.toLowerCase()) || c.city.toLowerCase().includes(search.toLowerCase()));
+
             return (
                 <div className="space-y-6">
-                    <div className="flex justify-between items-center">
-                        <h2 className="text-3xl font-bold">Clientes</h2>
-                        <button onClick={addClient} className="bg-slate-900 text-white px-6 py-2 rounded-xl font-bold flex items-center space-x-2">
-                            <Lucide.UserPlus size={18}/> <span>Novo Cliente</span>
+                    <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <div>
+                            <h2 className="text-3xl font-bold text-slate-900">Meus Clientes</h2>
+                            <p className="text-slate-500">{clients.length} compradores registrados.</p>
+                        </div>
+                        <button onClick={addClient} className="w-full sm:w-auto bg-amber-500 text-slate-900 px-6 py-3 rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-lg hover:bg-amber-400 transition-all">
+                            <Lucide.UserPlus size={20}/> <span>Novo Cliente</span>
                         </button>
+                    </header>
+
+                    <div className="relative">
+                        <Lucide.Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20}/>
+                        <input 
+                            className="w-full pl-12 pr-4 py-4 rounded-2xl border border-slate-200 outline-none focus:ring-2 focus:ring-amber-500 shadow-sm"
+                            placeholder="Buscar por nome ou cidade..."
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                        />
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {clients.map(c => (
-                            <div key={c.id} className="bg-white p-5 rounded-2xl border border-slate-200 flex justify-between items-center">
-                                <div>
-                                    <div className="font-bold text-lg">{c.name}</div>
-                                    <div className="text-sm text-slate-500">Cadastrado em: {new Date(c.createdAt).toLocaleDateString()}</div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {filtered.map(c => (
+                            <div key={c.id} className="bg-white p-6 rounded-3xl border border-slate-200 hover:border-amber-300 transition-all shadow-sm group">
+                                <div className="flex justify-between items-start mb-4">
+                                    <div className="bg-slate-100 p-3 rounded-2xl group-hover:bg-amber-100 transition-colors">
+                                        <Lucide.User className="text-slate-500 group-hover:text-amber-600" />
+                                    </div>
+                                    <button onClick={() => { if(confirm("Excluir cliente?")) setClients(clients.filter(cl => cl.id !== c.id)) }} className="text-slate-300 hover:text-red-500">
+                                        <Lucide.Trash2 size={18}/>
+                                    </button>
                                 </div>
-                                <Lucide.ChevronRight className="text-slate-300"/>
+                                <h3 className="font-bold text-xl text-slate-900 leading-tight mb-2">{c.name}</h3>
+                                <div className="space-y-2 text-sm text-slate-500">
+                                    <div className="flex items-center space-x-2">
+                                        <Lucide.MapPin size={14}/> <span>{c.city}</span>
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                        <Lucide.CreditCard size={14}/> <span>{c.document}</span>
+                                    </div>
+                                    <div className="pt-4 border-t border-slate-50 flex justify-between items-center text-[10px] font-bold uppercase tracking-wider">
+                                        <span className="text-slate-400">Último contato</span>
+                                        <span className="text-slate-900">{c.lastContactAt ? new Date(c.lastContactAt).toLocaleDateString() : 'NUNCA'}</span>
+                                    </div>
+                                </div>
                             </div>
                         ))}
                     </div>
@@ -191,55 +321,96 @@
             );
         };
 
-        const SettingsView = ({settings, setSettings}) => (
-            <div className="max-w-xl space-y-6">
-                <h2 className="text-3xl font-bold">Configurações</h2>
-                <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-4">
-                    <label className="block text-sm font-bold text-slate-700">URL do Google Apps Script (/exec)</label>
-                    <input 
-                        className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-amber-500 font-mono text-xs"
-                        value={settings.googleSheetsUrl}
-                        onChange={(e) => {
-                            const ns = {...settings, googleSheetsUrl: e.target.value};
-                            setSettings(ns);
-                            localStorage.setItem('crm_settings', JSON.stringify(ns));
-                        }}
-                        placeholder="https://script.google.com/macros/s/.../exec"
-                    />
-                    <div className="text-xs text-slate-400 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                        <p className="font-bold mb-1">Dica:</p>
-                        Para compartilhar com outra pessoa, basta ela colar este mesmo link nas configurações dela.
-                    </div>
+        const HistoryView = ({contacts}) => (
+            <div className="space-y-6">
+                <header>
+                    <h2 className="text-3xl font-bold text-slate-900">Histórico de Visitas</h2>
+                    <p className="text-slate-500">Registro de todas as interações comerciais.</p>
+                </header>
+
+                <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+                    {contacts.length === 0 ? (
+                        <div className="p-20 text-center text-slate-300 italic">Nenhuma visita registrada ainda.</div>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left">
+                                <thead className="bg-slate-50 border-b border-slate-100">
+                                    <tr>
+                                        <th className="p-6 text-xs font-bold uppercase text-slate-400">Data</th>
+                                        <th className="p-6 text-xs font-bold uppercase text-slate-400">Cliente</th>
+                                        <th className="p-6 text-xs font-bold uppercase text-slate-400">Relato</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                    {contacts.map(c => (
+                                        <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+                                            <td className="p-6 text-sm text-slate-500 whitespace-nowrap">{new Date(c.date).toLocaleDateString()}</td>
+                                            <td className="p-6 font-bold text-slate-900 whitespace-nowrap">{c.clientName}</td>
+                                            <td className="p-6 text-sm text-slate-600 max-w-md">{c.notes}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
                 </div>
             </div>
         );
 
-        const HistoryView = ({contacts}) => (
-            <div className="space-y-6">
-                <h2 className="text-3xl font-bold">Histórico</h2>
-                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-                    {contacts.length === 0 ? (
-                        <div className="p-20 text-center text-slate-400 italic">Nenhum contato registrado ainda.</div>
-                    ) : (
-                        <table className="w-full text-left">
-                            <thead className="bg-slate-50 border-b border-slate-100">
-                                <tr>
-                                    <th className="p-4 text-xs font-bold uppercase text-slate-500">Data</th>
-                                    <th className="p-4 text-xs font-bold uppercase text-slate-500">Cliente</th>
-                                    <th className="p-4 text-xs font-bold uppercase text-slate-500">Tipo</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {contacts.map(c => (
-                                    <tr key={c.id} className="border-b border-slate-50">
-                                        <td className="p-4 text-sm">{new Date(c.date).toLocaleDateString()}</td>
-                                        <td className="p-4 font-bold">{c.clientName}</td>
-                                        <td className="p-4 text-sm">{c.type}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    )}
+        const SettingsView = ({settings, setSettings, onTest}) => (
+            <div className="max-w-4xl space-y-8 animate-in slide-in-from-bottom-4 duration-500">
+                <header>
+                    <h2 className="text-3xl font-bold text-slate-900">Configurações</h2>
+                    <p className="text-slate-500">Conecte seu sistema à nuvem do Google.</p>
+                </header>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+                        <div className="flex items-center space-x-3 text-slate-900 font-bold">
+                            <Lucide.Database className="text-amber-500" />
+                            <span>Link da Planilha (Script URL)</span>
+                        </div>
+                        <input 
+                            className="w-full px-4 py-4 rounded-2xl border border-slate-200 outline-none focus:ring-2 focus:ring-amber-500 font-mono text-xs bg-slate-50"
+                            value={settings.googleSheetsUrl}
+                            onChange={(e) => setSettings({...settings, googleSheetsUrl: e.target.value})}
+                            placeholder="https://script.google.com/macros/s/.../exec"
+                        />
+                        <button onClick={onTest} className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold hover:bg-slate-800 transition-all flex items-center justify-center space-x-2">
+                            <Lucide.CheckCircle2 size={18}/>
+                            <span>Salvar e Testar Link</span>
+                        </button>
+                    </div>
+
+                    <div className="bg-slate-900 text-white p-8 rounded-3xl space-y-6">
+                        <h4 className="font-bold flex items-center space-x-2">
+                            <Lucide.Activity className="text-amber-500" />
+                            <span>Atividade da Nuvem</span>
+                        </h4>
+                        <div className="space-y-4 max-h-60 overflow-y-auto custom-scrollbar pr-2">
+                            {settings.syncHistory && settings.syncHistory.length > 0 ? (
+                                settings.syncHistory.map((log, i) => (
+                                    <div key={i} className="flex items-start space-x-3 text-[10px] border-l border-slate-700 pl-4 py-1">
+                                        <div className={`w-2 h-2 rounded-full mt-1 ${log.status === 'success' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                                        <div>
+                                            <div className="text-slate-500">{new Date(log.timestamp).toLocaleTimeString()}</div>
+                                            <div className="font-medium">{log.message}</div>
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="text-slate-500 italic text-xs">Nenhuma atividade registrada.</div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="bg-blue-50 p-6 rounded-3xl border border-blue-100 flex items-start space-x-4">
+                    <Lucide.Info className="text-blue-500 flex-shrink-0 mt-1" />
+                    <div className="text-sm text-blue-800 space-y-2">
+                        <p className="font-bold">Como obter o link?</p>
+                        <p>No Google Sheets, vá em <b>Extensões > Apps Script</b>, cole o código do script, clique em <b>Implantar > Nova Implantação</b> e selecione "App da Web" acessível por "Qualquer Pessoa".</p>
+                    </div>
                 </div>
             </div>
         );
